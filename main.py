@@ -151,6 +151,12 @@ async def analyze_document_with_vlm(file_path: str, mime_type: str) -> dict:
         Your job is to:
         1. Extract ALL raw text from the document exactly as it appears — this is the OCR output.
         2. Structure and categorize that data into strict JSON.
+        3. Assign a realistic \`confidence_score\` to each extracted item using the following strict rubric (output as percentage string, e.g., "85.5%"):
+           - 95-100%: Perfectly legible digital text, no artifacts, standard medical formatting.
+           - 85-94%: Clear handwritten text, or digital text with slight compression/blur, easy to read.
+           - 70-84%: Messy handwriting, faint print, or moderate noise/shadows over the text.
+           - 50-69%: Very messy doctor handwriting, severe blur, crossed-out text, requires guessing context to read.
+           - <50%: Nearly illegible, heavy artifacting, extreme guesswork. Do NOT default to 99% if the text is clearly handwritten or slightly blurry. Be honest and penalize for bad handwriting.
 
         Return ONLY valid JSON with this exact structure:
         {
