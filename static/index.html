@@ -1,0 +1,1265 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCR - VLM | Medical Document Analyzer</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            /* Light Theme Variables */
+            --bg-color: #f0f4f8;
+            --bg-gradient: linear-gradient(135deg, #f0f4f8 0%, #e2e8f0 100%);
+            --card-bg: rgba(255, 255, 255, 0.85);
+            --card-border: rgba(255, 255, 255, 0.5);
+            --text-main: #0f172a;
+            --text-sub: #475569;
+            --text-muted: #94a3b8;
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --secondary: #8b5cf6;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --border: #cbd5e1;
+            --shadow-sm: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+            --shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+            --shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            --glass-blur: blur(12px);
+            --code-bg: #1e293b;
+            --table-header: #f8fafc;
+            --table-row-border: #e2e8f0;
+        }
+
+        [data-theme="dark"] {
+            /* Dark Theme Variables */
+            --bg-color: #0f172a;
+            --bg-gradient: linear-gradient(135deg, #090e17 0%, #0f172a 100%);
+            --card-bg: rgba(30, 41, 59, 0.75);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --text-main: #f8fafc;
+            --text-sub: #cbd5e1;
+            --text-muted: #64748b;
+            --primary: #60a5fa;
+            --primary-hover: #3b82f6;
+            --secondary: #a78bfa;
+            --border: #334155;
+            --shadow-sm: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -1px rgba(0, 0, 0, 0.1);
+            --shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+            --shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 10px 10px -5px rgba(0, 0, 0, 0.2);
+            --code-bg: #0f172a;
+            --table-header: #1e293b;
+            --table-row-border: #334155;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-gradient);
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            padding: 40px 20px;
+            transition: background 0.4s ease, color 0.4s ease;
+        }
+
+        /* Decorative Background Elements */
+        .bg-shapes {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        .shape {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: 0.4;
+            transition: background 0.5s ease;
+        }
+
+        [data-theme="light"] .shape-1 {
+            background: rgba(59, 130, 246, 0.4);
+            width: 400px;
+            height: 400px;
+            top: -100px;
+            left: -100px;
+        }
+
+        [data-theme="light"] .shape-2 {
+            background: rgba(139, 92, 246, 0.3);
+            width: 500px;
+            height: 500px;
+            bottom: -200px;
+            right: -150px;
+        }
+
+        [data-theme="dark"] .shape-1 {
+            background: rgba(37, 99, 235, 0.3);
+            width: 400px;
+            height: 400px;
+            top: -100px;
+            left: -100px;
+        }
+
+        [data-theme="dark"] .shape-2 {
+            background: rgba(124, 58, 237, 0.2);
+            width: 500px;
+            height: 500px;
+            bottom: -200px;
+            right: -150px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 760px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Header */
+        header {
+            text-align: center;
+            margin-bottom: 20px;
+            position: relative;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            letter-spacing: -0.05em;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+        }
+
+        header p {
+            color: var(--text-sub);
+            font-size: 1.05rem;
+            font-weight: 400;
+        }
+
+        /* Theme Toggle */
+        #theme-toggle {
+            position: absolute;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            background: var(--card-bg);
+            backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--card-border);
+            color: var(--text-main);
+            padding: 10px 14px;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 500;
+            box-shadow: var(--shadow-sm);
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #theme-toggle:hover {
+            transform: translateY(-50%) scale(1.05);
+            box-shadow: var(--shadow-md);
+        }
+
+        /* Generic Card Style (Glassmorphism) */
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: var(--glass-blur);
+            -webkit-backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: var(--shadow-lg);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .card:hover {
+            box-shadow: 0 25px 30px -5px rgba(0, 0, 0, 0.15), 0 15px 15px -5px rgba(0, 0, 0, 0.05);
+        }
+
+        /* Upload Area */
+        .upload-area {
+            text-align: center;
+            border: 2px dashed var(--border);
+            border-radius: 16px;
+            padding: 40px 20px;
+            background: rgba(0, 0, 0, 0.02);
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+
+        [data-theme="dark"] .upload-area {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .upload-area:hover,
+        .upload-area.dragover {
+            border-color: var(--primary);
+            background: rgba(59, 130, 246, 0.05);
+        }
+
+        .upload-icon {
+            font-size: 3.5rem;
+            margin-bottom: 12px;
+            display: inline-block;
+            transition: transform 0.3s ease;
+        }
+
+        .upload-area:hover .upload-icon {
+            transform: translateY(-5px);
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 16px;
+            margin-top: 24px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+
+        .btn:active {
+            transform: scale(0.97);
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: #fff;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-hover);
+            box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+        }
+
+        .btn-secondary {
+            background: var(--text-sub);
+            color: #fff;
+            box-shadow: 0 4px 12px rgba(71, 85, 105, 0.2);
+        }
+
+        .btn-secondary:hover {
+            background: var(--text-main);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            width: 100%;
+            font-size: 1.1rem;
+            padding: 16px;
+            box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3);
+        }
+
+        .btn-success:hover {
+            box-shadow: 0 12px 25px rgba(16, 185, 129, 0.4);
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        /* Preview Area */
+        #preview-container {
+            display: none;
+            position: relative;
+            margin-top: 20px;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: var(--shadow-md);
+            border: 1px solid var(--border);
+            background: var(--code-bg);
+        }
+
+        #preview-img {
+            width: 100%;
+            display: block;
+            max-height: 400px;
+            object-fit: contain;
+        }
+
+        #pdf-placeholder {
+            padding: 60px 30px;
+            text-align: center;
+            color: var(--text-sub);
+        }
+
+        .remove-btn {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            border: none;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            cursor: pointer;
+            font-size: 1.2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+            backdrop-filter: blur(4px);
+        }
+
+        .remove-btn:hover {
+            background: #ef4444;
+        }
+
+        /* Loader */
+        .loader-container {
+            display: none;
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .pulser {
+            width: 60px;
+            height: 60px;
+            background: var(--primary);
+            border-radius: 50%;
+            margin: 0 auto 20px;
+            animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            color: white;
+            box-shadow: 0 0 0 rgba(59, 130, 246, 0.5);
+        }
+
+        @keyframes pulse-ring {
+            0% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+            }
+
+            70% {
+                transform: scale(1);
+                box-shadow: 0 0 0 20px rgba(59, 130, 246, 0);
+            }
+
+            100% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+            }
+        }
+
+        /* Results section */
+        #results-area {
+            display: none;
+        }
+
+        .section-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text-main);
+        }
+
+        /* Grid specific layout for metadata */
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        .meta-item {
+            background: rgba(148, 163, 184, 0.1);
+            padding: 16px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+
+        .meta-item label {
+            display: block;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .meta-item span {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        /* Tags */
+        .tag {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            background: rgba(59, 130, 246, 0.1);
+            color: var(--primary);
+        }
+
+        .tag.success {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+        }
+
+        .tag.warning {
+            background: rgba(245, 158, 11, 0.1);
+            color: var(--warning);
+        }
+
+        .tag.danger {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+        }
+
+        /* Accuracy Banner */
+        .accuracy-banner {
+            background: linear-gradient(135deg, var(--code-bg), #000);
+            border-radius: 16px;
+            padding: 30px;
+            text-align: center;
+            color: white;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+
+        .accuracy-value {
+            font-size: 4rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #34d399, #059669);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            line-height: 1.1;
+            margin: 10px 0;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .progress-bar-bg {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50px;
+            height: 12px;
+            margin: 10px auto;
+            max-width: 400px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            border-radius: 50px;
+            transition: width 1.5s cubic-bezier(0.22, 1, 0.36, 1);
+            background: linear-gradient(90deg, #34d399, #059669);
+        }
+
+        /* Data Table */
+        .table-responsive {
+            overflow-x: auto;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95rem;
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 16px;
+            border-bottom: 1px solid var(--table-row-border);
+        }
+
+        th {
+            background: var(--table-header);
+            font-weight: 600;
+            color: var(--text-sub);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .item-name {
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        .item-category {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            display: block;
+            margin-top: 4px;
+        }
+
+        /* Confidence Bar in Table */
+        .mini-conf-bar {
+            height: 6px;
+            background: rgba(148, 163, 184, 0.2);
+            border-radius: 4px;
+            width: 80px;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+
+        .mini-conf-fill {
+            height: 100%;
+            border-radius: 4px;
+        }
+
+        /* Pipeline */
+        .pipeline {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            padding: 16px;
+            background: rgba(148, 163, 184, 0.05);
+            border-radius: 12px;
+        }
+
+        .step {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 8px 16px;
+            border-radius: 30px;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            color: var(--text-main);
+        }
+
+        .step.active {
+            background: rgba(16, 185, 129, 0.1);
+            border-color: rgba(16, 185, 129, 0.3);
+            color: var(--success);
+        }
+
+        .arrow {
+            color: var(--text-muted);
+        }
+
+        /* Pre code */
+        pre {
+            background: var(--code-bg);
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 12px;
+            overflow-x: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            line-height: 1.5;
+            border: 1px solid #334155;
+        }
+
+        /* Camera Modal */
+        #camera-modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 1000;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            backdrop-filter: blur(10px);
+        }
+
+        #camera-modal.open {
+            display: flex;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        #camera-video {
+            border-radius: 16px;
+            max-width: 90vw;
+            max-height: 65vh;
+            box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .cam-controls {
+            display: flex;
+            gap: 16px;
+        }
+
+        .btn-capture {
+            background: white;
+            color: #000;
+            font-weight: 700;
+            padding: 16px 36px;
+            border-radius: 50px;
+            border: none;
+            cursor: pointer;
+            font-size: 1.1rem;
+            box-shadow: 0 4px 20px rgba(255, 255, 255, 0.2);
+            transition: transform 0.2s;
+        }
+
+        .btn-capture:hover {
+            transform: scale(1.05);
+        }
+
+        .btn-cam-close {
+            background: var(--danger);
+            color: white;
+            padding: 16px 24px;
+            border-radius: 50px;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        #camera-canvas {
+            display: none;
+        }
+
+        @media (max-width: 600px) {
+            header h1 {
+                font-size: 2rem;
+            }
+
+            #theme-toggle {
+                position: static;
+                transform: none;
+                display: inline-flex;
+                margin-top: 10px;
+            }
+
+            .meta-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .btn-group {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Decorative Background -->
+    <div class="bg-shapes">
+        <div class="shape shape-1"></div>
+        <div class="shape shape-2"></div>
+    </div>
+
+    <!-- Camera Modal -->
+    <div id="camera-modal">
+        <video id="camera-video" autoplay playsinline></video>
+        <canvas id="camera-canvas"></canvas>
+        <div class="cam-controls">
+            <button class="btn-capture" onclick="capturePhoto()">📸 Capture Document</button>
+            <button class="btn-cam-close" onclick="closeCamera()">✕ Cancel</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>🩺 OCR-VLM</h1>
+            <p>Next-Gen Medical Document Extraction using Vision AI</p>
+            <button id="theme-toggle">
+                <span class="icon">🌓</span> <span id="theme-text">Dark Mode</span>
+            </button>
+        </header>
+
+        <!-- Main Upload Card -->
+        <div class="card" id="upload-section">
+            <div class="upload-area" id="drop-zone" onclick="document.getElementById('fileInput').click()">
+                <div class="upload-icon">📄</div>
+                <h3 style="margin-bottom: 8px;">Upload or Scan a Document</h3>
+                <p style="color: var(--text-sub); font-size: 0.9rem;">
+                    Drag & drop files here or click to browse<br>
+                    <span style="font-size: 0.8rem; opacity: 0.8; display: inline-block; margin-top: 8px;">
+                        Supported: JPG, PNG, WEBP, PDF
+                    </span>
+                </p>
+                <input type="file" id="fileInput"
+                    accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,application/pdf">
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="openCamera()">📷 Use Camera</button>
+                <button class="btn btn-secondary" onclick="document.getElementById('fileInput').click()">📂 Browse
+                    Files</button>
+            </div>
+
+            <!-- File Preview Area -->
+            <div id="preview-container">
+                <img id="preview-img" src="" alt="Preview">
+                <div id="pdf-placeholder">
+                    <div style="font-size: 3rem; margin-bottom: 12px;">📑</div>
+                    <h3 id="pdf-name" style="color: var(--text-main); margin-bottom: 8px;">Document.pdf</h3>
+                    <p id="pdf-size" style="color: var(--text-sub); font-size: 0.9rem;">2.4 MB</p>
+                </div>
+                <button class="remove-btn" onclick="clearFile(event)" title="Remove file">✕</button>
+            </div>
+
+            <button id="scan-btn" class="btn btn-success" style="display: none; margin-top: 24px;"
+                onclick="uploadAndScan()">
+                ✨ Start AI Analysis
+            </button>
+        </div>
+
+        <!-- Loading State -->
+        <div class="card loader-container" id="loader">
+            <div class="pulser">⚡</div>
+            <h3 style="margin-bottom: 8px; font-size: 1.25rem;">Processing via Gemini AI...</h3>
+            <p style="color: var(--text-sub); font-size: 0.95rem;">Extracting texts, structuring data, and validating
+                medical entities.</p>
+
+            <div class="pipeline"
+                style="margin-top: 24px; justify-content: flex-start; background: transparent; padding: 0;">
+                <div class="step active">1. Uploading</div>
+                <span class="arrow">→</span>
+                <div class="step active">2. AI Vision processing</div>
+                <span class="arrow">→</span>
+                <div class="step">3. Formatting data</div>
+            </div>
+        </div>
+
+        <!-- Results Area -->
+        <div id="results-area" style="display: flex; flex-direction: column; gap: 24px;"></div>
+
+    </div>
+
+    <!-- Application Script -->
+    <script>
+        // ── STATE ──
+        let selectedFile = null;
+        let currentScannedData = null;
+        let cameraStream = null;
+
+        // ── ELEMENTS ──
+        const themeToggle = document.getElementById('theme-toggle');
+        const themeText = document.getElementById('theme-text');
+        const fileInput = document.getElementById('fileInput');
+        const dropZone = document.getElementById('drop-zone');
+        const previewContainer = document.getElementById('preview-container');
+        const previewImg = document.getElementById('preview-img');
+        const pdfPlaceholder = document.getElementById('pdf-placeholder');
+        const pdfName = document.getElementById('pdf-name');
+        const pdfSize = document.getElementById('pdf-size');
+        const scanBtn = document.getElementById('scan-btn');
+        const loader = document.getElementById('loader');
+        const resultsArea = document.getElementById('results-area');
+        const uploadSection = document.getElementById('upload-section');
+
+        // ── THEME LOGIC ──
+        function toggleTheme() {
+            const html = document.documentElement;
+            const current = html.getAttribute('data-theme');
+            const target = current === 'light' ? 'dark' : 'light';
+            html.setAttribute('data-theme', target);
+            themeText.textContent = target === 'dark' ? 'Light Mode' : 'Dark Mode';
+            localStorage.setItem('theme', target);
+        }
+
+        // Initialize Theme
+        const savedTheme = localStorage.getItem('theme') ||
+            (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        themeText.textContent = savedTheme === 'dark' ? 'Light Mode' : 'Dark Mode';
+
+        // Add Event Listener for Theme Toggle
+        themeToggle.addEventListener('click', toggleTheme);
+
+
+        // ── FILE DRAG & DROP LOGIC ──
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => dropZone.classList.add('dragover'), false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => dropZone.classList.remove('dragover'), false);
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            if (files.length) handleFileSelect(files[0]);
+        });
+
+
+        // ── FILE INPUT LOGIC ──
+        fileInput.addEventListener('change', function (e) {
+            if (this.files && this.files[0]) handleFileSelect(this.files[0]);
+        });
+
+        function handleFileSelect(file) {
+            selectedFile = file;
+            const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+
+            previewContainer.style.display = 'block';
+            scanBtn.style.display = 'flex';
+            resultsArea.innerHTML = '';
+            resultsArea.style.display = 'none';
+
+            if (isPDF) {
+                previewImg.style.display = 'none';
+                pdfName.textContent = file.name;
+                pdfSize.textContent = (file.size / 1024 / 1024).toFixed(2) + ' MB';
+                pdfPlaceholder.style.display = 'block';
+            } else {
+                pdfPlaceholder.style.display = 'none';
+                previewImg.style.display = 'block';
+                const reader = new FileReader();
+                reader.onload = ev => { previewImg.src = ev.target.result; };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function clearFile(e) {
+            if (e) e.stopPropagation();
+            selectedFile = null;
+            previewContainer.style.display = 'none';
+            previewImg.src = '';
+            pdfPlaceholder.style.display = 'none';
+            scanBtn.style.display = 'none';
+            fileInput.value = '';
+        }
+
+
+        // ── CAMERA LOGIC ──
+        async function openCamera() {
+            const modal = document.getElementById('camera-modal');
+            try {
+                cameraStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+                    audio: false
+                });
+                document.getElementById('camera-video').srcObject = cameraStream;
+                modal.classList.add('open');
+            } catch (err) {
+                alert('Camera error. Ensure permissions are granted.\n\nDetails: ' + err.message);
+            }
+        }
+
+        function capturePhoto() {
+            const video = document.getElementById('camera-video');
+            const canvas = document.getElementById('camera-canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+
+            canvas.toBlob(blob => {
+                const file = new File([blob], 'camera_capture.jpg', { type: 'image/jpeg' });
+                handleFileSelect(file);
+                closeCamera();
+            }, 'image/jpeg', 0.95);
+        }
+
+        function closeCamera() {
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(t => t.stop());
+                cameraStream = null;
+            }
+            document.getElementById('camera-modal').classList.remove('open');
+        }
+
+
+        // ── ANALYSIS LOGIC ──
+        async function uploadAndScan() {
+            if (!selectedFile) return;
+
+            // UI Transition
+            scanBtn.style.display = 'none';
+            uploadSection.style.display = 'none';
+            loader.style.display = 'block';
+            resultsArea.innerHTML = '';
+            resultsArea.style.display = 'none';
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            try {
+                const response = await fetch('/analyze', { method: 'POST', body: formData });
+                if (!response.ok) {
+                    const errText = await response.text();
+                    let errMsg = response.statusText;
+                    try { errMsg = JSON.parse(errText).detail || errMsg; } catch (e) { }
+                    throw new Error(errMsg);
+                }
+                const data = await response.json();
+                currentScannedData = data;
+
+                // Simulate slightly longer processing for UX (makes the pulse animation look good)
+                setTimeout(() => {
+                    renderResults(data);
+                }, 500);
+
+            } catch (error) {
+                uploadSection.style.display = 'block';
+                scanBtn.style.display = 'flex';
+                resultsArea.style.display = 'flex';
+                resultsArea.innerHTML = `
+                <div class="card" style="border: 1px solid var(--danger);">
+                    <h3 style="color: var(--danger); display: flex; align-items: center; gap: 8px;">
+                        <span>⚠️</span> Analysis Failed
+                    </h3>
+                    <p style="margin-top: 10px; color: var(--text-main);">${error.message}</p>
+                </div>`;
+            } finally {
+                loader.style.display = 'none';
+            }
+        }
+
+        // ── UTILITIES ──
+        function parseConfidence(val) {
+            if (!val) return null;
+            const n = parseFloat(String(val).replace('%', ''));
+            return isNaN(n) ? null : n;
+        }
+
+        function calcOverallAccuracy(items) {
+            if (!items || items.length === 0) return null;
+            const scores = items.map(i => parseConfidence(i.confidence_score)).filter(n => n !== null);
+            if (scores.length === 0) return null;
+            return (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1);
+        }
+
+        window.toggleCode = function (id) {
+            // Using a resilient approach inside dynamic content
+            const el = document.getElementById(id);
+            if (el) {
+                el.style.display = el.style.display === 'none' ? 'block' : 'none';
+            }
+        }
+
+        window.downloadData = function (type) {
+            if (!currentScannedData) return;
+            let content, filename;
+
+            if (type === 'json') {
+                // Remove fhir_bundle for standard JSON export without mutating original object
+                const exportObj = { ...currentScannedData };
+                delete exportObj.fhir_bundle;
+                content = JSON.stringify(exportObj, null, 2);
+                filename = 'medical_data.json';
+            } else if (type === 'fhir') {
+                const fhirData = currentScannedData.fhir_bundle || { error: "No FHIR data generated" };
+                content = JSON.stringify(fhirData, null, 2);
+                filename = 'fhir_bundle.json';
+            }
+
+            const blob = new Blob([content], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // ── RENDER RESULTS ──
+        function renderResults(data) {
+            const meta = data.metadata || {};
+            const items = data.extracted_data || [];
+            const overall = calcOverallAccuracy(items);
+            const docType = (data.classification || {}).type || 'Unknown Document';
+            const docConf = (data.classification || {}).confidence || '';
+            const summary = data.summary || 'No summary provided by AI.';
+
+            let html = '';
+
+            // Actions Header (New Scan button)
+            html += `
+            <div style="display: flex; justify-content: flex-end; margin-bottom: -10px;">
+                <button class="btn btn-secondary" onclick="resetApp()" style="padding: 8px 16px; font-size: 0.9rem;">
+                    ↺ Scan Another Document
+                </button>
+            </div>`;
+
+            // 1. Overall Accuracy Banner
+            if (overall !== null) {
+                const numOverall = parseFloat(overall);
+                let themeColor = '#059669'; // success
+                if (numOverall < 70) themeColor = '#ef4444'; // danger
+                else if (numOverall < 90) themeColor = '#f59e0b'; // warning
+
+                html += `
+                <div class="card accuracy-banner">
+                    <p style="font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.8;">
+                        Overall Extraction Accuracy
+                    </p>
+                    <div class="accuracy-value" style="background: linear-gradient(135deg, ${themeColor}, #ffffff); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                        ${overall}%
+                    </div>
+                    <div class="progress-bar-bg">
+                        <div class="progress-bar-fill" style="width: 0%; background: ${themeColor};" data-target-width="${overall}%"></div>
+                    </div>
+                    <p style="font-size: 0.8rem; opacity: 0.7; margin-top: 12px;">
+                        Based on confidence scores of ${items.length} extracted data point${items.length !== 1 ? 's' : ''}.
+                    </p>
+                </div>`;
+            }
+
+            // 2. Classification & Summary
+            html += `
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; gap: 16px; flex-wrap: wrap;">
+                    <h2 class="section-title" style="margin: 0; font-size: 1.5rem; color: var(--primary);">
+                        📄 ${docType}
+                    </h2>
+                    ${docConf ? `<span class="tag ${docConf.toLowerCase() === 'high' ? 'success' : 'warning'}">${docConf} Confidence</span>` : ''}
+                </div>
+                <div style="background: rgba(148, 163, 184, 0.08); padding: 16px; border-radius: 12px; border-left: 4px solid var(--primary);">
+                    <p style="font-size: 0.95rem; line-height: 1.6; color: var(--text-main);">
+                        <em>"${summary}"</em>
+                    </p>
+                </div>
+            </div>`;
+
+            // 3. Metadata
+            html += `
+            <div class="card">
+                <h3 class="section-title">👤 Patient & Provider Details</h3>
+                <div class="meta-grid">
+                    <div class="meta-item"><label>Patient Name</label><span>${meta.patient_name || '—'}</span></div>
+                    <div class="meta-item"><label>Provider / Doctor</label><span>${meta.doctor_name || '—'}</span></div>
+                    <div class="meta-item"><label>Document Date</label><span>${meta.document_date || '—'}</span></div>
+                    <div class="meta-item"><label>Facility</label><span>${meta.medical_center || '—'}</span></div>
+                </div>
+            </div>`;
+
+            // 4. Lookalike Digital Copy (from old UI, restyled for new UI)
+            html += `
+            <div class="card" style="background: var(--card-bg); border: 2px solid var(--border); font-family: 'JetBrains Mono', monospace; box-shadow: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--text-main); padding-bottom: 12px; margin-bottom: 20px;">
+                    <h3 style="font-family: 'Inter', sans-serif; font-size: 1.2rem; color: var(--text-main); margin: 0;">📄 Lookalike Digital Copy</h3>
+                    ${overall !== null ? `<span class="tag" style="background: var(--text-main); color: var(--card-bg);">Accuracy: ${overall}%</span>` : ''}
+                </div>
+                
+                <div style="display: flex; justify-content: space-between; margin-bottom: 24px; color: var(--text-main);">
+                    <div>
+                        <strong>Patient:</strong> ${meta.patient_name || '---'}<br>
+                        <strong>Date:</strong> ${meta.document_date || '---'}
+                    </div>
+                    <div style="text-align: right;">
+                        <strong>Dr.</strong> ${meta.doctor_name || '---'}<br>
+                        ${meta.medical_center || '---'}
+                    </div>
+                </div>
+                
+                <div style="border-top: 1px dashed var(--text-muted); padding-top: 20px;">
+                    ${items.length > 0 ? items.map(item => `
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--table-row-border); color: var(--text-main);">
+                            <div style="flex: 2; font-weight: 600;">${item.item_name}</div>
+                            <div style="flex: 1;">${item.value || ''}</div>
+                            <div style="flex: 1; text-align: right; color: var(--text-sub);">${item.unit_or_frequency || ''}</div>
+                        </div>`).join('') : '<p style="color: var(--text-muted);">No items found.</p>'}
+                </div>
+            </div>`;
+
+            // 5. Extracted Data Table
+            html += `
+            <div class="card">
+                <h3 class="section-title">📊 Structured Medical Data</h3>`;
+
+            if (items.length > 0) {
+                html += `
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Clinical Entity</th>
+                                <th>Value / Result</th>
+                                <th>Unit / Frequency</th>
+                                <th>AI Confidence</th>
+                            </tr>
+                        </thead>
+                        <tbody>`;
+
+                items.forEach(item => {
+                    const conf = parseConfidence(item.confidence_score);
+                    let barColor = 'var(--success)';
+                    let tagClass = 'success';
+                    if (conf < 70) { barColor = 'var(--danger)'; tagClass = 'danger'; }
+                    else if (conf < 90) { barColor = 'var(--warning)'; tagClass = 'warning'; }
+
+                    html += `
+                            <tr>
+                                <td>
+                                    <span class="item-name">${item.item_name || '—'}</span>
+                                    <span class="item-category">${item.category || 'Uncategorized'}</span>
+                                </td>
+                                <td style="font-weight: 500;">${item.value || '—'}</td>
+                                <td style="color: var(--text-sub);">${item.unit_or_frequency || '—'}</td>
+                                <td>
+                                    <span class="tag ${tagClass}">${item.confidence_score || 'N/A'}</span>
+                                    ${conf !== null ? `
+                                    <div class="mini-conf-bar">
+                                        <div class="mini-conf-fill" style="width: ${Math.min(conf, 100)}%; background: ${barColor};"></div>
+                                    </div>` : ''}
+                                </td>
+                            </tr>`;
+                });
+
+                html += `
+                        </tbody>
+                    </table>
+                </div>`;
+            } else {
+                html += `<div style="text-align: center; padding: 30px; color: var(--text-muted); background: var(--table-header); border-radius: 12px;">No structured entities were extracted from this document.</div>`;
+            }
+            html += `</div>`;
+
+
+            // 5. Actions / Export Data
+            const stdJson = { ...data };
+            delete stdJson.fhir_bundle;
+            const fhirBundleData = data.fhir_bundle || { status: "not generated" };
+
+            html += `
+            <div class="card">
+                <h3 class="section-title">💾 System Actions & Export</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px;">
+                    <button class="btn btn-secondary" onclick="toggleCode('json-view')">👁️ View Standard JSON</button>
+                    <button class="btn btn-primary" onclick="downloadData('json')">⬇️ Export JSON</button>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
+                    <button class="btn btn-secondary" onclick="toggleCode('fhir-view')">👁️ View FHIR Bundle</button>
+                    <button class="btn btn-primary" onclick="downloadData('fhir')">⬇️ Export FHIR</button>
+                </div>
+                
+                <div id="json-view" style="display: none; margin-top: 20px; animation: fadeIn 0.3s ease;">
+                    <p style="margin-bottom: 10px; font-weight: 600; color: var(--primary);">Standard JSON Output:</p>
+                    <pre><code>${encodeHTML(JSON.stringify(stdJson, null, 2))}</code></pre>
+                </div>
+                
+                <div id="fhir-view" style="display: none; margin-top: 20px; animation: fadeIn 0.3s ease;">
+                    <p style="margin-bottom: 10px; font-weight: 600; color: var(--secondary);">FHIR Release 4 Bundle:</p>
+                    <pre><code>${encodeHTML(JSON.stringify(fhirBundleData, null, 2))}</code></pre>
+                </div>
+            </div>`;
+
+            // 6. Raw OCR Output (collapsible)
+            html += `
+            <div class="card">
+                 <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="toggleCode('raw-ocr')">
+                     <h3 class="section-title" style="margin: 0;">🔍 Raw OCR Output</h3>
+                     <span class="tag" style="background: var(--border); color: var(--text-main);">Click to Expand</span>
+                 </div>
+                 <div id="raw-ocr" style="display: none; margin-top: 16px; animation: fadeIn 0.3s ease;">
+                     <pre style="white-space: pre-wrap; font-size: 0.8rem; border-color: transparent;">${encodeHTML(data.raw_ocr_output || 'No readable text.')}</pre>
+                 </div>
+            </div>`;
+
+
+            resultsArea.innerHTML = html;
+            resultsArea.style.display = 'flex';
+
+            // Animate progress bar (requires slight delay to trigger CSS transition)
+            setTimeout(() => {
+                const bar = document.querySelector('.progress-bar-fill');
+                if (bar) bar.style.width = bar.getAttribute('data-target-width');
+            }, 50);
+
+            // Scroll down smoothly
+            setTimeout(() => {
+                resultsArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 100);
+        }
+
+        // Add helper for resetting the app
+        window.resetApp = function () {
+            clearFile();
+            resultsArea.innerHTML = '';
+            resultsArea.style.display = 'none';
+            uploadSection.style.display = 'block';
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // HTML escaping helper to prevent XSS in pre tags
+        function encodeHTML(str) {
+            return str.replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+    </script>
+</body>
+
+</html>
