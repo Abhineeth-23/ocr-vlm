@@ -727,7 +727,7 @@
         <!-- Header -->
         <header>
             <h1>🩺 OCR-VLM</h1>
-            <p>Next-Gen Medical Document Extraction using Vision AI</p>
+            <p>Next-Gen Medical Document Extraction using Google's VLM</p>
             <button id="theme-toggle">
                 <span class="icon">🌓</span> <span id="theme-text">Dark Mode</span>
             </button>
@@ -767,14 +767,14 @@
 
             <button id="scan-btn" class="btn btn-success" style="display: none; margin-top: 24px;"
                 onclick="uploadAndScan()">
-                ✨ Start AI Analysis
+                ✨ Start VLM Analysis
             </button>
         </div>
 
         <!-- Loading State -->
         <div class="card loader-container" id="loader">
             <div class="pulser">⚡</div>
-            <h3 style="margin-bottom: 8px; font-size: 1.25rem;">Processing via Gemini AI...</h3>
+            <h3 style="margin-bottom: 8px; font-size: 1.25rem;">Processing via Google's VLM...</h3>
             <p style="color: var(--text-sub); font-size: 0.95rem;">Extracting texts, structuring data, and validating
                 medical entities.</p>
 
@@ -782,7 +782,7 @@
                 style="margin-top: 24px; justify-content: flex-start; background: transparent; padding: 0;">
                 <div class="step active">1. Uploading</div>
                 <span class="arrow">→</span>
-                <div class="step active">2. AI Vision processing</div>
+                <div class="step active">2. VLM processing</div>
                 <span class="arrow">→</span>
                 <div class="step">3. Formatting data</div>
             </div>
@@ -1039,7 +1039,7 @@
             const overall = calcOverallAccuracy(items);
             const docType = (data.classification || {}).type || 'Unknown Document';
             const docConf = (data.classification || {}).confidence || '';
-            const summary = data.summary || 'No summary provided by AI.';
+            const summary = data.summary || 'No summary provided by VLM.';
 
             let html = '';
 
@@ -1146,7 +1146,7 @@
                                 <th>Clinical Entity</th>
                                 <th>Value / Result</th>
                                 <th>Unit / Frequency</th>
-                                <th>AI Confidence</th>
+                                <th>VLM Confidence</th>
                             </tr>
                         </thead>
                         <tbody>`;

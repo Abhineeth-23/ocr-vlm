@@ -131,7 +131,7 @@ def generate_fhir_bundle(data: dict) -> dict:
 # --- AI EXTRACTION (Vision OCR → Structured JSON) ---
 async def analyze_document_with_vlm(file_path: str, mime_type: str) -> dict:
     try:
-        logging.info(f"Sending file to Gemini Vision AI (MIME: {mime_type})...")
+        logging.info(f"Sending file to Google's VLM (MIME: {mime_type})...")
 
         with open(file_path, "rb") as f:
             file_bytes = f.read()
@@ -146,7 +146,7 @@ async def analyze_document_with_vlm(file_path: str, mime_type: str) -> dict:
             mime_type = "image/png"
 
         prompt = """
-        You are an expert medical document AI with OCR capabilities. You will be given a medical document (image or PDF).
+        You are an expert medical document VLM with OCR capabilities. You will be given a medical document (image or PDF).
 
         Your job is to:
         1. Extract ALL raw text from the document exactly as it appears — this is the OCR output.
@@ -192,11 +192,11 @@ async def analyze_document_with_vlm(file_path: str, mime_type: str) -> dict:
         parsed_data = json.loads(clean_json)
         parsed_data['fhir_bundle'] = generate_fhir_bundle(parsed_data)
 
-        logging.info("Gemini Vision extraction successful.")
+        logging.info("Google VLM extraction successful.")
         return parsed_data
 
     except Exception as e:
-        logging.error(f"AI Vision Error: {e}")
+        logging.error(f"VLM Error: {e}")
         raise
 
 
