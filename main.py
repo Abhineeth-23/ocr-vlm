@@ -3,17 +3,17 @@ import io
 import json
 import logging
 import asyncio
+import shutil
 from typing import List, Optional
+
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
-import shutil
 from dotenv import load_dotenv
 from PIL import Image
-import requests
 
 # --- CONFIGURATION ---
 load_dotenv()
@@ -25,25 +25,23 @@ if not GENAI_API_KEY:
 client = genai.Client(api_key=GENAI_API_KEY)
 
 app = FastAPI(title="Medical VLM Service")
+
+# Create static directory if it doesn't exist to prevent startup crashes
+os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Supported MIME types — images + PDF
 SUPPORTED_MIME_TYPES = {
-    # Images (Gemini Vision supported natively)
     ".jpg":  "image/jpeg",
     ".jpeg": "image/jpeg",
     ".png":  "image/png",
     ".gif":  "image/gif",
     ".webp": "image/webp",
     ".bmp":  "image/bmp",
-    # Converted server-side before sending to Gemini
     ".tif":  "image/tiff",
     ".tiff": "image/tiff",
-    # Documents
     ".pdf":  "application/pdf",
 }
 
-# MIME types that Gemini does NOT support — we convert them to PNG first
 CONVERT_TO_PNG = {"image/tiff"}
 
 # --- DATA MODELS ---
@@ -79,7 +77,6 @@ async def analyze_document_with_vlm(file_path: str, mime_type: str) -> dict:
         with open(file_path, "rb") as f:
             file_bytes = f.read()
 
-        # Convert unsupported types (e.g. TIFF) to PNG before sending to Gemini
         if mime_type in CONVERT_TO_PNG:
             logging.info(f"Converting {mime_type} → image/png for Gemini compatibility...")
             img = Image.open(io.BytesIO(file_bytes))
@@ -94,7 +91,7 @@ async def analyze_document_with_vlm(file_path: str, mime_type: str) -> dict:
         Your job is to:
         1. Extract ALL raw text from the document exactly as it appears — this is the OCR output.
         2. Structure and categorize that data into strict JSON.
-        3. Assign a realistic \`confidence_score\` to each extracted item using the following strict rubric (output as percentage string, e.g., "85.5%"):
+        3. Assign a realistic `confidence_score` to each extracted item using the following strict rubric (output as percentage string, e.g., "85.5%"):
            - 95-100%: Perfectly legible digital text, no artifacts, standard medical formatting.
            - 85-94%: Clear handwritten text, or digital text with slight compression/blur, easy to read.
            - 70-84%: Messy handwriting, faint print, or moderate noise/shadows over the text.
@@ -119,20 +116,26 @@ async def analyze_document_with_vlm(file_path: str, mime_type: str) -> dict:
 
         doc_part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
 
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json"
+        )
+
         try:
             response = await asyncio.to_thread(
                 client.models.generate_content,
                 model='gemini-2.5-flash',
-                contents=[prompt, doc_part]
+                contents=[prompt, doc_part],
+                config=config
             )
         except Exception as api_err:
             err_str = str(api_err)
             if "503" in err_str or "UNAVAILABLE" in err_str:
-                logging.warning("gemini-2.5-flash is temporarily unavailable, falling back to gemini-2.0-flash...")
+                logging.warning("gemini-2.5-flash unavailable, falling back to gemini-2.0-flash...")
                 response = await asyncio.to_thread(
                     client.models.generate_content,
                     model='gemini-2.0-flash',
-                    contents=[prompt, doc_part]
+                    contents=[prompt, doc_part],
+                    config=config
                 )
             else:
                 raise
@@ -151,17 +154,18 @@ async def analyze_document_with_vlm(file_path: str, mime_type: str) -> dict:
 # --- ENDPOINTS ---
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
+    if not os.path.exists("static/index.html"):
+        return HTMLResponse("<h1>Medical VLM Service is Running</h1><p>Please place your index.html in the static folder.</p>")
+    
     with open("static/index.html", "r", encoding="utf-8") as f:
         return f.read()
 
 
 @app.post("/analyze", response_model=MedicalDocumentResponse)
 async def analyze_document(file: UploadFile = File(...)):
-    # Determine MIME type from extension
     ext = os.path.splitext(file.filename or "")[1].lower()
     mime_type = SUPPORTED_MIME_TYPES.get(ext)
 
-    # Fallback: try content_type from request
     if not mime_type:
         ct = file.content_type or ""
         if ct.startswith("image/") or ct == "application/pdf":
@@ -179,27 +183,12 @@ async def analyze_document(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, buffer)
 
     try:
+        # Just extract and return. No forwarding needed for Phase 1!
         structured_data = await analyze_document_with_vlm(temp_filename, mime_type)
-        
-        # --- SEND DATA TO REGISTRATIONS API ---
-        try:
-            # Create a copy to avoid modifying the response going back to the frontend
-            standard_json_payload = dict(structured_data)
-
-            # Fire it off to the specific port
-            response = requests.post(
-                "http://172.18.8.57:8081/submitdata", 
-                json=standard_json_payload, 
-                timeout=5
-            )
-            logging.info(f"Sent to port 8081! Server responded with status: {response.status_code}")
-        except Exception as forward_err:
-            logging.error(f"Failed to send JSON to target API: {forward_err}")
-        # ---------------------------------------
-
         return structured_data
+        
     except Exception as e:
-        logging.error(e)
+        logging.error(f"Analysis failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if os.path.exists(temp_filename):

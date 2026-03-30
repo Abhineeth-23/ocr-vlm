@@ -29,3 +29,4 @@ build/
 .coverage
 htmlcov/
 *.log
+temp_*
