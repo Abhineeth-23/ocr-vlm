@@ -13,6 +13,7 @@ from google.genai import types
 import shutil
 from dotenv import load_dotenv
 from PIL import Image
+import requests
 
 # --- CONFIGURATION ---
 load_dotenv()
@@ -69,64 +70,6 @@ class MedicalDocumentResponse(BaseModel):
     extracted_data: List[ExtractedItem]
     summary: Optional[str] = None
     raw_ocr_output: Optional[str] = None
-    fhir_bundle: Optional[dict] = Field(None, description="FHIR compliant bundle")
-
-# --- FHIR CONVERTER ---
-def generate_fhir_bundle(data: dict) -> dict:
-    entries = []
-    meta = data.get('metadata', {})
-
-    patient_id = "patient-1"
-    if meta.get('patient_name') and meta['patient_name'] != "Not Detected":
-        entries.append({
-            "fullUrl": f"urn:uuid:{patient_id}",
-            "resource": {"resourceType": "Patient", "id": patient_id, "name": [{"text": meta['patient_name']}]}
-        })
-
-    practitioner_id = "practitioner-1"
-    if meta.get('doctor_name') and meta['doctor_name'] != "Not Detected":
-        entries.append({
-            "fullUrl": f"urn:uuid:{practitioner_id}",
-            "resource": {"resourceType": "Practitioner", "id": practitioner_id, "name": [{"text": meta['doctor_name']}]}
-        })
-
-    doc_type = data.get('classification', {}).get('type', '').lower()
-
-    for idx, item in enumerate(data.get('extracted_data', [])):
-        item_name = item.get('item_name')
-        if not item_name: continue
-
-        value = item.get('value') or ""
-        unit = item.get('unit_or_frequency') or ""
-        combined_val = f"{value} {unit}".strip()
-        category = item.get('category', '').lower() if item.get('category') else ""
-
-        if "prescription" in doc_type or "medication" in category:
-            resource = {
-                "resourceType": "MedicationRequest",
-                "id": f"medreq-{idx}",
-                "status": "unknown",
-                "intent": "order",
-                "medicationCodeableConcept": {"text": item_name},
-            }
-            if combined_val: resource["dosageInstruction"] = [{"text": combined_val}]
-            if meta.get('patient_name'): resource["subject"] = {"reference": f"urn:uuid:{patient_id}"}
-            if meta.get('doctor_name'): resource["requester"] = {"reference": f"urn:uuid:{practitioner_id}"}
-        else:
-            resource = {
-                "resourceType": "Observation",
-                "id": f"obs-{idx}",
-                "status": "final",
-                "code": {"text": item_name},
-                "valueString": combined_val
-            }
-            if meta.get('patient_name'): resource["subject"] = {"reference": f"urn:uuid:{patient_id}"}
-            if meta.get('doctor_name'): resource["performer"] = [{"reference": f"urn:uuid:{practitioner_id}"}]
-
-        entries.append({"fullUrl": f"urn:uuid:{resource['id']}", "resource": resource})
-
-    return {"resourceType": "Bundle", "type": "collection", "entry": entries}
-
 
 # --- AI EXTRACTION (Vision OCR → Structured JSON) ---
 async def analyze_document_with_vlm(file_path: str, mime_type: str) -> dict:
@@ -196,7 +139,6 @@ async def analyze_document_with_vlm(file_path: str, mime_type: str) -> dict:
 
         clean_json = response.text.replace('```json', '').replace('```', '').strip()
         parsed_data = json.loads(clean_json)
-        parsed_data['fhir_bundle'] = generate_fhir_bundle(parsed_data)
 
         logging.info("Google VLM extraction successful.")
         return parsed_data
@@ -238,6 +180,23 @@ async def analyze_document(file: UploadFile = File(...)):
 
     try:
         structured_data = await analyze_document_with_vlm(temp_filename, mime_type)
+        
+        # --- SEND DATA TO REGISTRATIONS API ---
+        try:
+            # Create a copy to avoid modifying the response going back to the frontend
+            standard_json_payload = dict(structured_data)
+
+            # Fire it off to the specific port
+            response = requests.post(
+                "http://172.18.8.57:8081/submitdata", 
+                json=standard_json_payload, 
+                timeout=5
+            )
+            logging.info(f"Sent to port 8081! Server responded with status: {response.status_code}")
+        except Exception as forward_err:
+            logging.error(f"Failed to send JSON to target API: {forward_err}")
+        # ---------------------------------------
+
         return structured_data
     except Exception as e:
         logging.error(e)
