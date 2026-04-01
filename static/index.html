@@ -964,12 +964,35 @@
                     try { errMsg = JSON.parse(errText).detail || errMsg; } catch (e) { }
                     throw new Error(errMsg);
                 }
-                const data = await response.json();
-                currentScannedData = data;
+                
+                // 1. Get the raw new schema from the backend
+                const rawData = await response.json();
+                
+                // 2. ADAPTER: Translate the new schema back into the format your UI and Export buttons expect
+                currentScannedData = {
+                    ...rawData,
+                    metadata: {
+                        patient_name: (rawData.patient || {}).name || null,
+                        doctor_name: (rawData.document_info || {}).doctor_name || null,
+                        document_date: (rawData.document_info || {}).document_date || null,
+                        medical_center: (rawData.organization || {}).name || null
+                    },
+                    extracted_data: [
+                        ...(rawData.observations || []).map(o => ({ 
+                            item_name: o.name, value: o.value, unit_or_frequency: o.unit, category: "Observation", confidence_score: o.confidence_score 
+                        })),
+                        ...(rawData.conditions || []).map(c => ({ 
+                            item_name: c.name, value: c.clinicalStatus, unit_or_frequency: "", category: "Condition", confidence_score: c.confidence_score 
+                        })),
+                        ...(rawData.medications || []).map(m => ({ 
+                            item_name: m.name, value: m.dosage_or_frequency, unit_or_frequency: "", category: "Medication", confidence_score: m.confidence_score 
+                        }))
+                    ]
+                };
 
-                // Simulate slightly longer processing for UX (makes the pulse animation look good)
+                // Simulate slightly longer processing for UX 
                 setTimeout(() => {
-                    renderResults(data);
+                    renderResults(currentScannedData); // Pass the translated data to the UI
                 }, 500);
 
             } catch (error) {
@@ -1042,6 +1065,40 @@
             return `${sanitizedName}_medical_summary.${extension}`;
         }
 
+        async function ensureDocxLibrary() {
+            if (window.docx && window.docx.Packer) return true;
+
+            // Avoid duplicating the script tag when multiple clicks happen rapidly
+            let loaderScript = document.querySelector('script[data-docx-loader]');
+            if (loaderScript) {
+                return new Promise(resolve => {
+                    loaderScript.addEventListener('load', () => resolve(!!window.docx && !!window.docx.Packer));
+                    loaderScript.addEventListener('error', () => resolve(false));
+                });
+            }
+
+            return new Promise(resolve => {
+                loaderScript = document.createElement('script');
+                loaderScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/docx/8.2.4/docx.min.js';
+                loaderScript.async = true;
+                loaderScript.setAttribute('data-docx-loader', 'true');
+
+                loaderScript.onload = () => resolve(!!window.docx && !!window.docx.Packer);
+                loaderScript.onerror = async () => {
+                    console.warn('Failed to load docx from CDN; trying local fallback.');
+                    // Attempt local offline fallback (place docx.min.js at static/js/docx.min.js)
+                    const localScript = document.createElement('script');
+                    localScript.src = '/static/js/docx.min.js';
+                    localScript.async = true;
+                    localScript.onload = () => resolve(!!window.docx && !!window.docx.Packer);
+                    localScript.onerror = () => resolve(false);
+                    document.head.appendChild(localScript);
+                };
+
+                document.head.appendChild(loaderScript);
+            });
+        }
+
                 window.downloadPDFSummary = function () {
             const element = document.getElementById('pdf-summary-block');
             if(!element) return;
@@ -1071,7 +1128,11 @@
             if (!currentScannedData) return;
             
             const meta = currentScannedData.metadata || {};
-            const items = currentScannedData.extracted_data || [];
+            const items = [
+                ...(currentScannedData.observations || []).map(o => ({ item_name: o.name, value: o.value, unit_or_frequency: o.unit, category: "Observation", confidence_score: o.confidence_score })),
+                ...(currentScannedData.conditions || []).map(c => ({ item_name: c.name, value: c.clinicalStatus, unit_or_frequency: "", category: "Condition", confidence_score: c.confidence_score })),
+                ...(currentScannedData.medications || []).map(m => ({ item_name: m.name, value: m.dosage_or_frequency, unit_or_frequency: "", category: "Medication", confidence_score: m.confidence_score }))
+            ];
             
             // Helper to escape quotes and wrap in quotes
             const escapeCSV = (str) => {
@@ -1104,7 +1165,14 @@
 
         window.downloadDOCSummary = async function () {
             if (!currentScannedData) return;
-            
+
+            const docxReady = await ensureDocxLibrary();
+            if (!docxReady) {
+                console.error('docx library not available for DOCX export');
+                alert('DOC export requires the docx library. Please check your internet connection and try again.');
+                return;
+            }
+
             const meta = currentScannedData.metadata || {};
             const items = currentScannedData.extracted_data || [];
             
@@ -1151,8 +1219,13 @@
             });
 
             // Generate and save the file
-            const blob = await docx.Packer.toBlob(doc);
-            saveAs(blob, getSummaryFilename('docx')); // saveAs comes from your imported FileSaver.js
+            try {
+                const blob = await docx.Packer.toBlob(doc);
+                saveAs(blob, getSummaryFilename('docx')); // saveAs comes from your imported FileSaver.js
+            } catch (err) {
+                console.error('DOCX generation failed', err);
+                alert('DOC export failed: ' + (err?.message || err));
+            }
         }
 
         window.downloadJSONSummary = function () {

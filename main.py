@@ -4,11 +4,12 @@ import json
 import logging
 import asyncio
 import shutil
+import re
 from typing import List, Optional
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
@@ -26,7 +27,6 @@ client = genai.Client(api_key=GENAI_API_KEY)
 
 app = FastAPI(title="Medical VLM Service")
 
-# Create static directory if it doesn't exist to prevent startup crashes
 os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -44,41 +44,93 @@ SUPPORTED_MIME_TYPES = {
 
 CONVERT_TO_PNG = {"image/tiff"}
 
-# --- DATA MODELS ---
-class Metadata(BaseModel):
-    patient_name: Optional[str] = Field(None, description="Name of the patient")
-    doctor_name: Optional[str] = Field(None, description="Name of the doctor")
-    medical_center: Optional[str] = None
-    document_date: Optional[str] = Field(None, description="YYYY-MM-DD")
 
-class ExtractedItem(BaseModel):
-    item_name: str = Field(..., description="Name of medicine or test")
-    value: Optional[str] = Field(None, description="Dosage or Result value")
-    unit_or_frequency: Optional[str] = Field(None, description="e.g. 'mg', 'Twice Daily'")
-    category: Optional[str] = Field(None, description="Medication | Lab Test | Vitals")
-    confidence_score: str = Field(..., description="High Confidence e.g. '98.5%' or '99.9%'")
+def extract_json_payload(raw_text: str) -> str:
+    text = raw_text.strip()
+    if not text:
+        return text
+
+    # Remove fenced markdown blocks and any leading labels.
+    text = re.sub(r'```(?:json)?\s*', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'```', '', text)
+
+    # Preserve only the first top-level JSON object or array.
+    first_index = min([i for i in (text.find('{'), text.find('[')) if i != -1], default=-1)
+    if first_index > 0:
+        text = text[first_index:]
+
+    if not text:
+        return text
+
+    opening = '{' if text.startswith('{') else ('[' if text.startswith('[') else None)
+    if opening:
+        closing = '}' if opening == '{' else ']'
+        stack = []
+        for idx, ch in enumerate(text):
+            if ch == opening:
+                stack.append(ch)
+            elif ch == closing and stack:
+                stack.pop()
+                if not stack:
+                    return text[:idx + 1].strip()
+
+    return text.strip()
+
+
+# --- MERGED DATA MODELS ---
+
+class Patient(BaseModel):
+    name: Optional[str] = None
+    gender: Optional[str] = Field(None, description="male | female | other | unknown")
+    birthDate: Optional[str] = Field(None, description="YYYY-MM-DD")
+    Age: Optional[int] = None
+
+class Organization(BaseModel):
+    name: Optional[str] = None
+
+class DocumentInfo(BaseModel):
+    doctor_name: Optional[str] = None
+    document_date: Optional[str] = Field(None, description="YYYY-MM-DD")
 
 class Classification(BaseModel):
     type: str = Field(..., description="Prescription, Lab Report, etc.")
     confidence: str = Field(..., description="High, Medium, Low")
 
+class Observation(BaseModel):
+    name: str = Field(..., description="Name of test or vitals")
+    value: Optional[str] = Field(None, description="Result value. Use string to accommodate '<0.5' or '120/80'")
+    unit: Optional[str] = None
+    dateTime: Optional[str] = Field(None, description="ISO datetime if available")
+    confidence_score: str = Field(..., description="e.g., '98.5%'")
+
+class Condition(BaseModel):
+    name: str = Field(..., description="Diagnosis or symptom")
+    clinicalStatus: Optional[str] = Field(None, description="active | inactive | resolved")
+    confidence_score: str = Field(..., description="e.g., '98.5%'")
+
+class Medication(BaseModel):
+    name: str = Field(..., description="Name of medicine")
+    dosage_or_frequency: Optional[str] = None
+    confidence_score: str = Field(..., description="e.g., '98.5%'")
+
 class MedicalDocumentResponse(BaseModel):
-    metadata: Metadata
-    classification: Classification
-    extracted_data: List[ExtractedItem]
+    document_info: Optional[DocumentInfo] = None
+    patient: Optional[Patient] = None
+    organization: Optional[Organization] = None
+    classification: Optional[Classification] = None
+    observations: Optional[List[Observation]] = []
+    conditions: Optional[List[Condition]] = []
+    medications: Optional[List[Medication]] = []
     summary: Optional[str] = None
-    raw_ocr_output: Optional[str] = None
+    # raw_ocr_output has been permanently removed
+
 
 # --- AI EXTRACTION (Vision OCR → Structured JSON) ---
-async def analyze_document_with_vlm(file_path: str, mime_type: str) -> dict:
+async def analyze_document_with_vlm(file_bytes: bytes, mime_type: str) -> dict:
     try:
         logging.info(f"Sending file to Google's VLM (MIME: {mime_type})...")
 
-        with open(file_path, "rb") as f:
-            file_bytes = f.read()
-
         if mime_type in CONVERT_TO_PNG:
-            logging.info(f"Converting {mime_type} → image/png for Gemini compatibility...")
             img = Image.open(io.BytesIO(file_bytes))
             buf = io.BytesIO()
             img.save(buf, format="PNG")
@@ -88,36 +140,41 @@ async def analyze_document_with_vlm(file_path: str, mime_type: str) -> dict:
         prompt = """
         You are an expert medical document VLM with OCR capabilities. You will be given a medical document (image or PDF).
 
-        Your job is to:
-        1. Extract ALL raw text from the document exactly as it appears — this is the OCR output.
-        2. Structure and categorize that data into strict JSON.
-        3. Assign a realistic `confidence_score` to each extracted item using the following strict rubric (output as percentage string, e.g., "85.5%"):
-           - 95-100%: Perfectly legible digital text, no artifacts, standard medical formatting.
-           - 85-94%: Clear handwritten text, or digital text with slight compression/blur, easy to read.
-           - 70-84%: Messy handwriting, faint print, or moderate noise/shadows over the text.
-           - 50-69%: Very messy doctor handwriting, severe blur, crossed-out text, requires guessing context to read.
-           - <50%: Nearly illegible, heavy artifacting, extreme guesswork. Do NOT default to 99% if the text is clearly handwritten or slightly blurry. Be honest and penalize for bad handwriting.
+        Your job is to read the document and extract the core clinical data into strict JSON format.
 
-        Return ONLY valid JSON with this exact structure:
+        CRITICAL EXTRACTION RULES:
+        1. Ignore Administrative Bullshit: DO NOT extract sample collection times, registered dates, report generation times, lab technician names, pathologist names, or addresses into the arrays. 
+        2. DO extract the Patient demographics (Name, Age, Gender) and Organization/Facility name into their respective objects.
+        3. Assign a realistic `confidence_score` to each array item (Observations, Conditions, Medications) using this rubric:
+           - 95-100%: Perfectly legible digital text.
+           - 85-94%: Clear handwritten text or slightly blurry digital text.
+           - 70-84%: Messy handwriting or faint print.
+           - <70%: Nearly illegible, requires guessing.
+
+        Return ONLY valid JSON with this exact structure (Omit keys if the data does not exist in the document):
         {
-            "metadata": { "patient_name": "...", "doctor_name": "...", "medical_center": "...", "document_date": "YYYY-MM-DD" },
+            "document_info": { "doctor_name": "...", "document_date": "YYYY-MM-DD" },
             "classification": { "type": "Prescription/Lab Report/etc.", "confidence": "High/Medium/Low" },
-            "extracted_data": [
-                { "item_name": "...", "value": "...", "unit_or_frequency": "...", "category": "Medication|Lab Test|Vitals", "confidence_score": "XX.X%" }
+            "patient": { "name": "...", "gender": "male|female|other|unknown", "birthDate": "YYYY-MM-DD", "Age": 21 },
+            "organization": { "name": "..." },
+            "observations": [
+                { "name": "...", "value": "...", "unit": "...", "dateTime": "...", "confidence_score": "XX.X%" }
             ],
-            "summary": "1 sentence summary of the document",
-            "raw_ocr_output": "All raw text extracted from the document exactly as it appears"
+            "conditions": [
+                { "name": "...", "clinicalStatus": "active|inactive|resolved", "confidence_score": "XX.X%" }
+            ],
+            "medications": [
+                { "name": "...", "dosage_or_frequency": "...", "confidence_score": "XX.X%" }
+            ],
+            "summary": "1 sentence clinical summary of the document"
         }
-
-        For confidence_score, reflect your actual certainty (e.g. "99.2%" if clear, "84.5%" if ambiguous).
-        If a field is not present in the document, use null.
-        For PDFs with multiple pages, process all pages and combine the extracted data.
         """
 
         doc_part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
 
         config = types.GenerateContentConfig(
-            response_mime_type="application/json"
+            response_mime_type="application/json",
+            temperature=0.0
         )
 
         try:
@@ -140,8 +197,13 @@ async def analyze_document_with_vlm(file_path: str, mime_type: str) -> dict:
             else:
                 raise
 
-        clean_json = response.text.replace('```json', '').replace('```', '').strip()
-        parsed_data = json.loads(clean_json)
+        clean_json = extract_json_payload(response.text)
+
+        try:
+            parsed_data = json.loads(clean_json)
+        except json.JSONDecodeError as parse_err:
+            logging.error(f"VLM JSON parse failed. Raw response:\n{response.text}")
+            raise ValueError(f"Failed to parse valid JSON from VLM output: {parse_err}")
 
         logging.info("Google VLM extraction successful.")
         return parsed_data
@@ -157,11 +219,10 @@ async def read_root():
     if not os.path.exists("static/index.html"):
         return HTMLResponse("<h1>Medical VLM Service is Running</h1><p>Please place your index.html in the static folder.</p>")
     
-    with open("static/index.html", "r", encoding="utf-8") as f:
-        return f.read()
+    return FileResponse("static/index.html")
 
-
-@app.post("/analyze", response_model=MedicalDocumentResponse)
+# response_model_exclude_none=True ensures that any null values are stripped from the final JSON
+@app.post("/analyze", response_model=MedicalDocumentResponse, response_model_exclude_none=True)
 async def analyze_document(file: UploadFile = File(...)):
     ext = os.path.splitext(file.filename or "")[1].lower()
     mime_type = SUPPORTED_MIME_TYPES.get(ext)
@@ -178,18 +239,12 @@ async def analyze_document(file: UploadFile = File(...)):
             detail=f"Unsupported file type '{ext}'. Supported formats: {supported}"
         )
 
-    temp_filename = f"temp_{file.filename}"
-    with open(temp_filename, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    file_bytes = await file.read()
 
     try:
-        # Just extract and return. No forwarding needed for Phase 1!
-        structured_data = await analyze_document_with_vlm(temp_filename, mime_type)
+        structured_data = await analyze_document_with_vlm(file_bytes, mime_type)
         return structured_data
         
     except Exception as e:
         logging.error(f"Analysis failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if os.path.exists(temp_filename):
-            os.remove(temp_filename)
